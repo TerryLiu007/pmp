@@ -5,10 +5,10 @@ from utils import *
 import os
 import numpy as np
 import shutil
-import matplotlib.pyplot as plt
+from matplotlib import pyplot as plt
 import articulate as art
 from articulate.utils.rbdl import *
-from net import PIP
+from net import PMP
 import json
 
 
@@ -28,7 +28,7 @@ class FullPoseEvaluator:
     names = ['Absolute Jitter Error (km/s^3)']
 
     def __init__(self):
-        self._base_motion_loss_fn = art.FullMotionEvaluator(configs.smpl_file, device=device)
+        self._base_motion_loss_fn = art.FullMotionEvaluator(paths.smpl_file, device=device)
 
     def __call__(self, pose_p, pose_t, tran_p, tran_t):
         errs = self._base_motion_loss_fn(pose_p=pose_p, pose_t=pose_t, tran_p=tran_p, tran_t=tran_t)
@@ -43,7 +43,7 @@ def evaluate_zmp_distance(poses, trans, fps=60, foot_radius=0.1):
     qdots[0] = qdots[1]
     qddots = (qdots[1:] - qdots[:-1]) * fps
     qddots = np.concatenate((qddots[:1], qddots))
-    rbdl_model = RBDLModel(configs.physics_model_file)
+    rbdl_model = RBDLModel(paths.physics_model_file)
 
     floor_height = []
     for q in qs[2:30]:
@@ -81,28 +81,50 @@ def evaluate_zmp_distance(poses, trans, fps=60, foot_radius=0.1):
     return sum(dists) / len(dists)
 
 
-def run_pipeline(net, data_dir):
+def gen_pose_from_quats(joint_tree):
+    joint_names = []
+    quats = []
+    for k in joint_tree.keys():
+        quats.append(joint_tree[k])
+        joint_names.append(k)
+    joint_names = np.array(joint_names)[joint_set.model_joint_map]
+    quats = torch.Tensor([i for i in np.array(quats)[joint_set.model_joint_map]])
+    pose = art.math.quaternion_to_rotation_matrix(quats)
+    return pose
+
+
+def run_pipeline(net, data_dir, id):
     r"""
     Run `net` using the imu data loaded from `data_dir`.
     Save the estimated [Pose[num_frames, 24, 3, 3], Tran[num_frames, 3]] for each of `sequence_ids`.
     """
     print('Loading data from "%s"' % data_dir)
-    frames = json.load(open(os.path.join(data_dir, 'exp_triangulation_player.json', 'r')))
-    sequences = {}
-    for frame in frames:
+    frames = open(os.path.join(data_dir, 'exp_player.json'), 'r').readlines()
+    pos_sequence = {}
+    rot_sequence = {}
+    trans_sequence = {}
+    for line in frames:
+        frame = json.loads(line)
         for target in frame['targets_3d']:
             id = target['trackid_3d']
-            if id not in sequences.keys():
-                sequences[id] = []
-                sequences[id].append(np.array(target['keypoints_3d'][configs.joint_index_map])[:, :3])
+            if id not in pos_sequence.keys():
+                pos_sequence[id] = []
+                pos_sequence[id].append(np.array(target['keypoints_3d'])[joint_set.joint_index_map][:, :3])
+                rot_sequence[id] = []
+                rot_sequence[id].append(gen_pose_from_quats(target['model']))
+                trans_sequence[id] = []
+                trans_sequence[id].append(target['model']['_root_translate'])
+            else:
+                pos_sequence[id].append(np.array(target['keypoints_3d'])[joint_set.joint_index_map][:, :3])
+                rot_sequence[id].append(gen_pose_from_quats(target['model']))
+                trans_sequence[id].append(target['model']['_root_translate'])
 
     data_name = os.path.basename(data_dir)
-    output_dir = os.path.join(configs.result_dir, data_name, net.name)
+    output_dir = os.path.join(paths.result_dir, data_name, net.name)
     os.makedirs(output_dir, exist_ok=True)
 
     print('Saving the results at "%s"' % output_dir)
-    for i in tqdm.tqdm(sequences.keys()):
-        torch.save(net.predict(sequences[i]), os.path.join(output_dir, '%d.pt' % i))
+    torch.save(net.optimize(pos_sequence[id], rot_sequence[id], trans_sequence[id]), os.path.join(output_dir, '%d.pt' % i))
 
 
 def evaluate(net, data_dir, sequence_ids=None, flush_cache=False, pose_evaluator=FullPoseEvaluator(), evaluate_pose=False, evaluate_tran=False, evaluate_zmp=False):
@@ -111,7 +133,7 @@ def evaluate(net, data_dir, sequence_ids=None, flush_cache=False, pose_evaluator
     `net` should implement `net.name` and `net.predict(glb_acc, glb_rot)`.
     """
     data_name = os.path.basename(data_dir)
-    result_dir = os.path.join(configs.result_dir, data_name, net.name)
+    result_dir = os.path.join(paths.result_dir, data_name, net.name)
     print_title('Evaluating "%s" on "%s"' % (net.name, data_name))
 
     _, _, pose_t_all, tran_t_all = torch.load(os.path.join(data_dir, 'test.pt')).values()
@@ -181,5 +203,5 @@ def evaluate(net, data_dir, sequence_ids=None, flush_cache=False, pose_evaluator
 
 
 if __name__ == '__main__':
-    net = PIP()
-    run_pipeline(net, configs.input_dir)
+    net = PMP()
+    run_pipeline(net, paths.input_dir, 0)

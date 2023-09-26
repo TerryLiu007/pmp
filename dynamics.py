@@ -6,7 +6,8 @@ from articulate.utils.bullet import *
 from articulate.utils.rbdl import *
 from utils import *
 from qpsolvers import solve_qp
-from config import configs
+from config import paths
+import pygame.time as timer
 
 
 class PhysicsOptimizer:
@@ -19,6 +20,7 @@ class PhysicsOptimizer:
         mu = 0.6
         supp_poly_size = 0.2
         self.debug = debug
+        self.clock = timer.Clock()
         self.model = RBDLModel(paths.physics_model_file, update_kinematics_by_hand=True)
         self.params = read_debug_param_values_from_json(paths.physics_parameter_file)
         self.friction_constraint_matrix = np.array([[np.sqrt(2), -mu, 0],
@@ -250,3 +252,18 @@ class PhysicsOptimizer:
         pose_opt = torch.from_numpy(pose_opt).float()[0]
         tran_opt = torch.from_numpy(tran_opt).float()[0]
         return pose_opt, tran_opt
+
+
+    def visualize_frame(self, pose, loc):
+
+        q = smpl_to_rbdl(pose, torch.zeros(3))[0]
+        # q = smpl_to_rbdl(pose, loc)[0]
+        if self.debug:
+            self.clock.tick(60)   # please install pygame
+            set_pose(self.id_robot, q)
+            self.params = read_debug_param_values_from_bullet()
+
+            if False:   # visualize GRF (no smoothing)
+                p.removeAllUserDebugItems()
+                for point, force in zip(collision_points, GRF.reshape(-1, 3)):
+                    p.addUserDebugLine(point, point + force * 1e-2, [1, 0, 0])
