@@ -9,7 +9,6 @@ from qpsolvers import solve_qp
 from config import paths
 import pygame.time as timer
 
-
 class PhysicsOptimizer:
     test_contact_joints = ['LHIP', 'RHIP', 'SPINE1', 'LKNEE', 'RKNEE', 'SPINE2',
                            'SPINE3', 'LSHOULDER', 'RSHOULDER', 'HEAD',
@@ -51,17 +50,18 @@ class PhysicsOptimizer:
         self.q = None
         self.qdot = np.zeros(self.model.qdot_size)
 
-    def optimize_frame(self, pose, jvel, contact, acc):
+    def optimize_frame(self, pose, contact, jpos, jvel=None):
         q_ref = smpl_to_rbdl(pose, torch.zeros(3))[0]
-        v_ref = jvel.numpy()
+        r_ref = jpos.numpy()
         c_ref = contact.sigmoid().numpy()
-        a_ref = acc.numpy()
         q = self.q
         qdot = self.qdot
 
         if q is None:
             self.q = q_ref
             return pose, torch.zeros(3)
+        if jvel is not None:
+            v_ref = jvel.numpy()
 
         # determine the contact joints and points
         self.model.update_kinematics(q, qdot, np.zeros(self.model.qdot_size))
@@ -101,6 +101,22 @@ class PhysicsOptimizer:
             As1.append(A)  # 72 * 75
             bs1.append(b)  # 72
 
+        # joint position PD controller (using joint position)
+        if True:
+            for joint_name, r in zip(
+                    ['ROOT', 'LHIP', 'RHIP', 'SPINE1', 'LKNEE', 'RKNEE', 'SPINE2', 'LANKLE', 'RANKLE',
+                     'SPINE3', 'LFOOT', 'RFOOT', 'NECK', 'LCLAVICLE', 'RCLAVICLE', 'HEAD', 'LSHOULDER',
+                     'RSHOULDER', 'LELBOW', 'RELBOW', 'LWRIST', 'RWRIST'], r_ref[:22]):
+                joint_id = vars(Body)[joint_name]
+                if joint_id == Body.LFOOT or joint_id == Body.RFOOT: continue
+                cur_vel = self.model.calc_point_velocity(q, qdot, joint_id)
+                cur_pos = self.model.calc_body_position(q, joint_id)
+                a_des = self.params['kp_linear'] * (r - cur_pos) - self.params['kd_linear'] * cur_vel
+                A = self.model.calc_point_Jacobian(q, joint_id)
+                b = -self.model.calc_point_acceleration(q, qdot, np.zeros(75), joint_id) + a_des
+                As1.append(A * self.params['coeff_jvel'])
+                bs1.append(b * self.params['coeff_jvel'])
+
         # joint position PD controller (using root velocity + ref pose to determine target joint position)
         if False:
             for joint_name in ['ROOT', 'LHIP', 'RHIP', 'SPINE1', 'LKNEE', 'RKNEE', 'SPINE2', 'LANKLE', 'RANKLE',
@@ -117,7 +133,7 @@ class PhysicsOptimizer:
                 bs1.append(b * 2)
 
         # joint position PD controller (using joint velocity to determine target joint position)
-        if True:
+        if False:
             for joint_name, v in zip(['ROOT', 'LHIP', 'RHIP', 'SPINE1', 'LKNEE', 'RKNEE', 'SPINE2', 'LANKLE', 'RANKLE',
                                       'SPINE3', 'LFOOT', 'RFOOT', 'NECK', 'LCLAVICLE', 'RCLAVICLE', 'HEAD', 'LSHOULDER',
                                       'RSHOULDER', 'LELBOW', 'RELBOW', 'LWRIST', 'RWRIST'], v_ref[:22]):
@@ -141,16 +157,6 @@ class PhysicsOptimizer:
                 b = (-self.model.calc_point_velocity(q, qdot, joint_id) + v) / self.params['delta_t']
                 As1.append(A * 2)
                 bs1.append(b * 2)
-
-        # IMU acceleration
-        if False:
-            for joint_name, a in zip(['LWRIST', 'RWRIST', 'LKNEE', 'RKNEE', 'HEAD', 'ROOT'], a_ref):
-                joint_id = vars(Body)[joint_name]
-                offset = np.zeros(3)
-                A = self.model.calc_point_Jacobian(q, joint_id, offset)
-                b = -self.model.calc_point_acceleration(q, qdot, np.zeros(self.model.qdot_size), joint_id, offset) + a
-                bs1.append(b * self.params['coeff_acc'])
-                As1.append(A * self.params['coeff_acc'])
 
         # lambda size
         if False:
@@ -256,8 +262,8 @@ class PhysicsOptimizer:
 
     def visualize_frame(self, pose, loc):
 
-        q = smpl_to_rbdl(pose, torch.zeros(3))[0]
-        # q = smpl_to_rbdl(pose, loc)[0]
+        # q = smpl_to_rbdl(pose, torch.zeros(3))[0]
+        q = smpl_to_rbdl(pose, loc)[0]
         if self.debug:
             self.clock.tick(60)   # please install pygame
             set_pose(self.id_robot, q)

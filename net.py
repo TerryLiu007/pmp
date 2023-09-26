@@ -1,10 +1,8 @@
 from torch.nn.utils.rnn import *
 import articulate as art
-from articulate.utils.torch import *
 from config import *
-from utils import *
 from dynamics import PhysicsOptimizer
-
+import numpy as np
 
 class PMP:
     name = 'pmp'
@@ -28,9 +26,11 @@ class PMP:
 
         for i in range(2, len(joint_rot)):
             p = joint_rot[i]
-            t = torch.Tensor(root_trans[i])
-            # p, t = self.dynamics_optimizer.optimize_frame(p, v, c, a)
-            self.dynamics_optimizer.visualize_frame(p, t)
+            c = torch.Tensor([1, 1])
+            t = torch.Tensor((np.array(root_trans[i]) - np.array(root_trans[0]))/100)
+            jt = torch.Tensor(joint_pos[i])
+            p, t = self.dynamics_optimizer.optimize_frame(p, c, jt)
+            # self.dynamics_optimizer.visualize_frame(p, t)
             pose_opt.append(p)
             tran_opt.append(t)
         pose_opt, tran_opt = torch.stack(pose_opt), torch.stack(tran_opt)

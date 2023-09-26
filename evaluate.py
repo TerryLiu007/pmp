@@ -88,7 +88,7 @@ def gen_pose_from_quats(joint_tree):
         quats.append(joint_tree[k])
         joint_names.append(k)
     joint_names = np.array(joint_names)[joint_set.model_joint_map]
-    quats = torch.Tensor([i for i in np.array(quats)[joint_set.model_joint_map]])
+    quats = torch.Tensor([i for i in np.array(quats, dtype=object)[joint_set.model_joint_map]])
     pose = art.math.quaternion_to_rotation_matrix(quats)
     return pose
 
@@ -124,7 +124,7 @@ def run_pipeline(net, data_dir, id):
     os.makedirs(output_dir, exist_ok=True)
 
     print('Saving the results at "%s"' % output_dir)
-    torch.save(net.optimize(pos_sequence[id], rot_sequence[id], trans_sequence[id]), os.path.join(output_dir, '%d.pt' % i))
+    torch.save(net.optimize(pos_sequence[id], rot_sequence[id], trans_sequence[id]), os.path.join(output_dir, '%d.pt' % id))
 
 
 def evaluate(net, data_dir, sequence_ids=None, flush_cache=False, pose_evaluator=FullPoseEvaluator(), evaluate_pose=False, evaluate_tran=False, evaluate_zmp=False):
